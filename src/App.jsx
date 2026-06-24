@@ -3,6 +3,8 @@ import Login from './components/Login.jsx'
 import Shift from './components/Shift.jsx'
 import ClockOff from './components/ClockOff.jsx'
 import { Tasks, Kpis, History } from './components/Screens.jsx'
+import Roster from './components/Roster.jsx'
+import LeaveRequest from './components/LeaveRequest.jsx'
 import { Wordmark, Toast, icons } from './components/ui.jsx'
 import { getActiveShift } from './api/client.js'
 import AdminPortal from './admin/AdminPortal.jsx'
@@ -56,6 +58,8 @@ export default function App() {
       <Shift employee={employee} shift={shift} setShift={setShift} toast={toast} onClockOffStart={() => setClockingOff(true)} />
     )
   } else if (tab === 'tasks') body = <Tasks toast={toast} />
+  else if (tab === 'roster') body = <Roster employee={employee} />
+  else if (tab === 'leave') body = <LeaveRequest employee={employee} toast={toast} />
   else if (tab === 'kpis') body = <Kpis employee={employee} />
   else body = <History employee={employee} />
 
@@ -70,11 +74,13 @@ export default function App() {
         {[
           ['shift', 'Shift'],
           ['tasks', 'Tasks'],
-          ['kpis', 'My KPIs'],
+          ['roster', 'Roster'],
+          ['leave', 'Leave'],
+          ['kpis', 'KPIs'],
           ['history', 'History'],
         ].map(([id, label]) => (
           <button key={id} className={tab === id ? 'on' : ''} onClick={() => { setTab(id); setClockingOff(false) }} aria-current={tab === id}>
-            {icons[id === 'kpis' ? 'kpis' : id === 'history' ? 'history' : id === 'tasks' ? 'tasks' : 'shift']}
+            {icons[id]}
             {label}
           </button>
         ))}

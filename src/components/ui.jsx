@@ -62,6 +62,18 @@ export const icons = {
       <path d="M5 13l4 4 10-11" />
     </svg>
   ),
+  roster: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="4.5" width="18" height="16" rx="2" />
+      <path d="M3 9.5h18M8 3v3M16 3v3" />
+    </svg>
+  ),
+  leave: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="4.5" width="18" height="16" rx="2" />
+      <path d="M3 9.5h18M8 3v3M16 3v3M9 14.5h6" />
+    </svg>
+  ),
 }
 
 export function Toast({ msg }) {
@@ -83,4 +95,61 @@ export function fmtTime(iso) {
 
 export function fmtDate(iso) {
   return new Date(iso).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })
+}
+
+// ---- week / date helpers (shared by roster + leave) ----
+// All work in local time and use plain YYYY-MM-DD strings, so there are no
+// timezone off-by-ones on week boundaries.
+
+export function ymd(d) {
+  const yy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${yy}-${mm}-${dd}`
+}
+
+export function parseYmd(s) {
+  const [y, m, d] = s.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
+export function addDays(date, n) {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  d.setDate(d.getDate() + n)
+  return d
+}
+
+// Monday of the week containing `date`.
+export function mondayOf(date) {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  const dow = (d.getDay() + 6) % 7 // Mon=0 … Sun=6
+  d.setDate(d.getDate() - dow)
+  return d
+}
+
+// 7 Date objects Mon→Sun for the week starting at weekStart (YYYY-MM-DD).
+export function weekDates(weekStart) {
+  const start = parseYmd(weekStart)
+  return Array.from({ length: 7 }, (_, i) => addDays(start, i))
+}
+
+// "16–22 Jun" (or "30 Jun – 6 Jul" across a month boundary).
+export function weekLabel(weekStart) {
+  const start = parseYmd(weekStart)
+  const end = addDays(start, 6)
+  const mon = (d) => d.toLocaleDateString('en-AU', { month: 'short' })
+  if (start.getMonth() === end.getMonth()) {
+    return `${start.getDate()}–${end.getDate()} ${mon(start)}`
+  }
+  return `${start.getDate()} ${mon(start)} – ${end.getDate()} ${mon(end)}`
+}
+
+// Inclusive day count between two YYYY-MM-DD strings.
+export function daysInclusive(from, to) {
+  return Math.round((parseYmd(to) - parseYmd(from)) / 86400000) + 1
+}
+
+// "Monday 16 Jun"
+export function fmtDayLong(ymdStr) {
+  return parseYmd(ymdStr).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short' })
 }

@@ -2,15 +2,19 @@ import React, { useEffect, useState } from 'react'
 import Dashboard from './Dashboard.jsx'
 import Timesheets from './Timesheets.jsx'
 import AdminTasks from './AdminTasks.jsx'
+import Roster from './Roster.jsx'
+import Leave from './Leave.jsx'
 import Employees from './Employees.jsx'
 import Reports from './Reports.jsx'
 import Audit from './Audit.jsx'
-import { getShiftsForApproval } from '../api/client.js'
+import { getShiftsForApproval, getAllLeaveRequests } from '../api/client.js'
 
 const NAV = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'timesheets', label: 'Timesheets' },
   { id: 'tasks', label: 'Tasks' },
+  { id: 'roster', label: 'Roster' },
+  { id: 'leave', label: 'Leave' },
   { id: 'employees', label: 'Employees' },
   { id: 'reports', label: 'Reports' },
   { id: 'audit', label: 'Audit' },
@@ -19,13 +23,19 @@ const NAV = [
 export default function AdminPortal({ employee, onLogout }) {
   const [page, setPage] = useState('dashboard')
   const [pendingCount, setPendingCount] = useState(0)
+  const [pendingLeave, setPendingLeave] = useState(0)
 
   async function refreshPending() {
     const shifts = await getShiftsForApproval()
     setPendingCount(shifts.length)
   }
 
-  useEffect(() => { refreshPending() }, [])
+  async function refreshPendingLeave() {
+    const all = await getAllLeaveRequests()
+    setPendingLeave(all.filter((l) => l.status === 'pending').length)
+  }
+
+  useEffect(() => { refreshPending(); refreshPendingLeave() }, [])
 
   return (
     <div className="admin-shell">
@@ -45,6 +55,9 @@ export default function AdminPortal({ employee, onLogout }) {
               {n.id === 'timesheets' && pendingCount > 0 && (
                 <span className="admin-badge">{pendingCount}</span>
               )}
+              {n.id === 'leave' && pendingLeave > 0 && (
+                <span className="admin-badge">{pendingLeave}</span>
+              )}
             </button>
           ))}
         </nav>
@@ -57,6 +70,8 @@ export default function AdminPortal({ employee, onLogout }) {
         {page === 'dashboard' && <Dashboard />}
         {page === 'timesheets' && <Timesheets employee={employee} onApprovalChange={refreshPending} />}
         {page === 'tasks' && <AdminTasks />}
+        {page === 'roster' && <Roster />}
+        {page === 'leave' && <Leave employee={employee} onPendingChange={setPendingLeave} />}
         {page === 'employees' && <Employees />}
         {page === 'reports' && <Reports />}
         {page === 'audit' && <Audit />}

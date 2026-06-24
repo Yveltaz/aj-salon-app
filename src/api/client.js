@@ -63,10 +63,12 @@ function load() {
     if (raw) {
       const db = JSON.parse(raw)
       if (!db.audit_log) db.audit_log = []
+      if (!db.roster_shifts) db.roster_shifts = []
+      if (!db.leave_requests) db.leave_requests = []
       return db
     }
   } catch (e) { /* corrupted store — reseed */ }
-  const db = { employees: SEED_EMPLOYEES, shifts: [], shift_events: [], shift_services: [], tasks: seedTasks(), audit_log: [] }
+  const db = { employees: SEED_EMPLOYEES, shifts: [], shift_events: [], shift_services: [], tasks: seedTasks(), audit_log: [], roster_shifts: [], leave_requests: [] }
   save(db)
   return db
 }
@@ -76,6 +78,17 @@ function save(db) {
 }
 
 const uid = () => 'id_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
+
+// Add n days to a YYYY-MM-DD string, returning a YYYY-MM-DD string (local-safe).
+function addDaysStr(ymd, n) {
+  const [y, m, d] = ymd.split('-').map(Number)
+  const dt = new Date(y, m - 1, d)
+  dt.setDate(dt.getDate() + n)
+  const yy = dt.getFullYear()
+  const mm = String(dt.getMonth() + 1).padStart(2, '0')
+  const dd = String(dt.getDate()).padStart(2, '0')
+  return `${yy}-${mm}-${dd}`
+}
 
 // --- auth ------------------------------------------------------------------
 
@@ -458,4 +471,197 @@ export async function getAuditLog() {
     const actor = db.employees.find((e) => e.employee_id === entry.actor_id)
     return { ...entry, actor_name: actor?.name || entry.actor_id }
   })
+}
+
+// --- roster -----------------------------------------------------------------
+//
+//   getRosterWeek(weekStart)         -> GET    /roster?week=YYYY-MM-DD
+//   saveRosterShift(shift)           -> POST   /roster              (upsert by roster_id)
+//   deleteRosterShift(rosterId)      -> DELETE /roster/:id
+//   publishRoster(weekStart)         -> POST   /roster/publish      (whole week)
+//   unpublishRoster(weekStart)       -> POST   /roster/unpublish
+//   copyRosterWeek(toWeekStart)      -> POST   /roster/copy         (previous week -> drafts)
+//   getRosteredShiftsInRange(employeeId, from, to) -> GET /roster?employee_id=&from=&to= (published only)
+//
+// weekStart is the Monday of the week as YYYY-MM-DD.
+
+export async function getRosterWeek(weekStart) {
+  const db = load()
+  const end = addDaysStr(weekStart, 6)
+  return db.roster_shifts
+    .filter((s) => s.date >= weekStart && s.date <= end)
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.start_time.localeCompare(b.start_time)))
+}
+
+// Upsert by roster_id. Blocks if the employee has an approved leave request that
+// overlaps the shift date (conflict rule from the spec).
+export async function saveRosterShift(shift) {
+  const db = load()
+  const emp = db.employees.find((e) => e.employee_id === shift.employee_id)
+  const conflict = db.leave_requests.find(
+    (l) => l.employee_id === shift.employee_id && l.status === 'approved' && shift.date >= l.from && shift.date <= l.to
+  )
+  if (conflict) {
+    throw new Error(`${emp?.name || 'Employee'} has approved leave on ${shift.date} — remove the leave approval first.`)
+  }
+  if (shift.roster_id) {
+    const existing = db.roster_shifts.find((s) => s.roster_id === shift.roster_id)
+    if (existing) {
+      Object.assign(existing, {
+        employee_id: shift.employee_id,
+        location_id: shift.location_id,
+        date: shift.date,
+        start_time: shift.start_time,
+        end_time: shift.end_time,
+        notes: shift.notes || '',
+        published: !!shift.published,
+      })
+      save(db)
+      return existing
+    }
+  }
+  const created = {
+    roster_id: shift.roster_id || uid(),
+    employee_id: shift.employee_id,
+    location_id: shift.location_id,
+    date: shift.date,
+    start_time: shift.start_time,
+    end_time: shift.end_time,
+    notes: shift.notes || '',
+    published: !!shift.published,
+  }
+  db.roster_shifts.push(created)
+  save(db)
+  return created
+}
+
+export async function deleteRosterShift(rosterId) {
+  const db = load()
+  const idx = db.roster_shifts.findIndex((s) => s.roster_id === rosterId)
+  if (idx === -1) throw new Error('Roster shift not found')
+  db.roster_shifts.splice(idx, 1)
+  save(db)
+}
+
+export async function publishRoster(weekStart) {
+  const db = load()
+  const end = addDaysStr(weekStart, 6)
+  for (const s of db.roster_shifts) {
+    if (s.date >= weekStart && s.date <= end) s.published = true
+  }
+  save(db)
+}
+
+export async function unpublishRoster(weekStart) {
+  const db = load()
+  const end = addDaysStr(weekStart, 6)
+  for (const s of db.roster_shifts) {
+    if (s.date >= weekStart && s.date <= end) s.published = false
+  }
+  save(db)
+}
+
+// Duplicate the previous week's shifts into the given week as unpublished drafts.
+export async function copyRosterWeek(toWeekStart) {
+  const db = load()
+  const fromWeekStart = addDaysStr(toWeekStart, -7)
+  const fromEnd = addDaysStr(fromWeekStart, 6)
+  const src = db.roster_shifts.filter((s) => s.date >= fromWeekStart && s.date <= fromEnd)
+  const created = src.map((s) => ({
+    roster_id: uid(),
+    employee_id: s.employee_id,
+    location_id: s.location_id,
+    date: addDaysStr(s.date, 7),
+    start_time: s.start_time,
+    end_time: s.end_time,
+    notes: s.notes || '',
+    published: false,
+  }))
+  db.roster_shifts.push(...created)
+  save(db)
+  return created
+}
+
+export async function getRosteredShiftsInRange(employeeId, from, to) {
+  const db = load()
+  return db.roster_shifts.filter(
+    (s) => s.employee_id === employeeId && s.published && s.date >= from && s.date <= to
+  )
+}
+
+// --- leave ------------------------------------------------------------------
+//
+//   getMyLeaveRequests(employeeId)        -> GET  /leave?employee_id=
+//   getAllLeaveRequests()                 -> GET  /leave            (admin)
+//   submitLeaveRequest({...})             -> POST /leave
+//   approveLeave(leaveId, actorId)        -> POST /leave/:id/approve
+//   rejectLeave(leaveId, actorId, reason) -> POST /leave/:id/reject (reason REQUIRED)
+
+export async function getMyLeaveRequests(employeeId) {
+  const db = load()
+  return db.leave_requests
+    .filter((l) => l.employee_id === employeeId)
+    .sort((a, b) => new Date(b.submitted_at) - new Date(a.submitted_at))
+}
+
+export async function getAllLeaveRequests() {
+  const db = load()
+  return db.leave_requests
+    .map((l) => ({
+      ...l,
+      employee: (({ pin: _p, ...e }) => e)(db.employees.find((e) => e.employee_id === l.employee_id) || {}),
+      actioned_by_name: db.employees.find((e) => e.employee_id === l.actioned_by)?.name || null,
+    }))
+    .sort((a, b) => new Date(b.submitted_at) - new Date(a.submitted_at))
+}
+
+export async function submitLeaveRequest({ employeeId, type, from, to, notes }) {
+  if (!from || !to) throw new Error('From and to dates are required')
+  const db = load()
+  const req = {
+    leave_id: uid(),
+    employee_id: employeeId,
+    type,
+    from,
+    to,
+    notes: notes || '',
+    status: 'pending',
+    submitted_at: new Date().toISOString(),
+    actioned_at: null,
+    actioned_by: null,
+    rejection_reason: null,
+  }
+  db.leave_requests.push(req)
+  save(db)
+  return req
+}
+
+export async function approveLeave(leaveId, actorId) {
+  const db = load()
+  const l = db.leave_requests.find((x) => x.leave_id === leaveId)
+  if (!l) throw new Error('Leave request not found')
+  if (l.status !== 'pending') throw new Error('Leave request already actioned')
+  const before = { ...l }
+  l.status = 'approved'
+  l.actioned_at = new Date().toISOString()
+  l.actioned_by = actorId
+  db.audit_log.push({ actor_id: actorId, entity_type: 'leave', entity_id: leaveId, action: 'approve', before_json: JSON.stringify(before), after_json: JSON.stringify(l), reason: null, at: new Date().toISOString() })
+  save(db)
+  return l
+}
+
+export async function rejectLeave(leaveId, actorId, reason) {
+  if (!reason) throw new Error('Reason is required')
+  const db = load()
+  const l = db.leave_requests.find((x) => x.leave_id === leaveId)
+  if (!l) throw new Error('Leave request not found')
+  if (l.status !== 'pending') throw new Error('Leave request already actioned')
+  const before = { ...l }
+  l.status = 'rejected'
+  l.actioned_at = new Date().toISOString()
+  l.actioned_by = actorId
+  l.rejection_reason = reason
+  db.audit_log.push({ actor_id: actorId, entity_type: 'leave', entity_id: leaveId, action: 'reject', before_json: JSON.stringify(before), after_json: JSON.stringify(l), reason, at: new Date().toISOString() })
+  save(db)
+  return l
 }
