@@ -6,7 +6,7 @@ import { Tasks, Kpis, History } from './components/Screens.jsx'
 import Roster from './components/Roster.jsx'
 import LeaveRequest from './components/LeaveRequest.jsx'
 import { Wordmark, Toast, icons } from './components/ui.jsx'
-import { getActiveShift } from './api/client.js'
+import { getActiveShift, logout as apiLogout } from './api/client.js'
 import AdminPortal from './admin/AdminPortal.jsx'
 
 const SESSION_KEY = 'aj_session'
@@ -37,6 +37,7 @@ export default function App() {
   if (!employee) return <div className="app"><Login onLogin={setEmployee} /><Toast msg={toastMsg} /></div>
 
   const logout = () => {
+    apiLogout()
     sessionStorage.removeItem(SESSION_KEY)
     setEmployee(null)
     setShift(null)

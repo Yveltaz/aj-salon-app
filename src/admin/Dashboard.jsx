@@ -1,10 +1,21 @@
 import React, { useEffect, useState } from 'react'
 import { getAdminDashboard } from '../api/client.js'
+import { supabase } from '../api/supabase.js'
 
 export default function Dashboard() {
   const [data, setData] = useState(null)
 
-  useEffect(() => { getAdminDashboard().then(setData) }, [])
+  useEffect(() => {
+    const refreshDashboard = () => getAdminDashboard().then(setData)
+    refreshDashboard()
+    // Live updates: re-pull the dashboard whenever any shift row changes so the
+    // "staff clocked on now" count tracks the floor in real time.
+    const channel = supabase
+      .channel('dashboard-shifts')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shifts' }, refreshDashboard)
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [])
 
   if (!data) return <div className="admin-screen" />
 
