@@ -1,0 +1,7 @@
+project_id = "hmdmkxqxwmvdjegtjxhp"
+
+# The create-staff-login function performs its own authentication and owner-role
+# check inside the handler (see index.ts), and must answer the CORS preflight
+# itself. Disable gateway JWT verification so the function controls every response.
+[functions.create-staff-login]
+verify_jwt = false

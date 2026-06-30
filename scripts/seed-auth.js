@@ -29,22 +29,37 @@ const supabase = createClient(url, serviceKey)
 
 const pins = ['1111', '2222', '3333', '0000', '9999']
 
-for (const pin of pins) {
+// Resolve a PIN to its auth user id, whether we just created it or it existed.
+async function authIdForPin(pin) {
   const email = `${pin}@aj-salon.internal`
   const { data, error } = await supabase.auth.admin.createUser({
     email,
     password: pin,
     email_confirm: true,
   })
-  if (error) {
-    if (error.message.includes('already been registered')) {
-      console.log(`PIN ${pin} — user already exists, skipping`)
-    } else {
-      console.error(`PIN ${pin} — failed:`, error.message)
-    }
-  } else {
+  if (!error) {
     console.log(`PIN ${pin} — created user ${data.user.id}`)
+    return data.user.id
   }
+  if (error.message.includes('already been registered')) {
+    console.log(`PIN ${pin} — user already exists`)
+    const { data: list } = await supabase.auth.admin.listUsers({ perPage: 1000 })
+    return list.users.find((u) => u.email === email)?.id || null
+  }
+  console.error(`PIN ${pin} — failed:`, error.message)
+  return null
+}
+
+for (const pin of pins) {
+  const authId = await authIdForPin(pin)
+  if (!authId) continue
+  // Link the auth user to its employee row. The create-staff-login Edge Function
+  // identifies the calling admin by employees.user_id, so this link is required
+  // for the owner to be allowed to create new staff logins.
+  const { error: linkErr } = await supabase
+    .from('employees').update({ user_id: authId }).eq('pin', pin)
+  if (linkErr) console.error(`PIN ${pin} — could not link user_id:`, linkErr.message)
+  else console.log(`PIN ${pin} — linked user_id`)
 }
 
 console.log('Done.')

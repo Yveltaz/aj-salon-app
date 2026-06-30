@@ -83,6 +83,11 @@ export async function login(pin) {
     .eq('pin', pin)
     .single()
   if (empErr || !emp) throw new Error('PIN not recognised')
+  // A deactivated employee keeps their login but is blocked at sign-in.
+  if (emp.active === false) {
+    await supabase.auth.signOut()
+    throw new Error('This account has been deactivated')
+  }
   return emp
 }
 
@@ -420,17 +425,43 @@ export async function getEmployees() {
 }
 
 export async function addEmployee({ name, role, pin }) {
+  // Reject duplicate PINs before inserting (cheap pre-check; the unique
+  // constraint and the Edge Function both back this up).
   const { data: existing } = await supabase.from('employees').select('employee_id').eq('pin', pin).maybeSingle()
   if (existing) throw new Error('PIN already in use')
-  const { data, error } = await supabase
+
+  const employee_id = uid()
+  const { data: emp, error } = await supabase
     .from('employees')
-    .insert({ employee_id: uid(), name, role, pin, active: true })
+    .insert({ employee_id, name, role, pin, active: true })
     .select(EMP_COLS).single()
   if (error) {
     if (error.message.includes('duplicate') || error.code === '23505') throw new Error('PIN already in use')
     throw new Error(error.message)
   }
-  return data
+
+  // Create the auth login via the Edge Function (uses the current admin's
+  // session token) so the new PIN can sign in immediately — no manual seed step.
+  const { data: { session } } = await supabase.auth.getSession()
+  const res = await fetch(
+    `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-staff-login`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session?.access_token}`,
+      },
+      body: JSON.stringify({ pin, employeeId: employee_id }),
+    }
+  )
+  const result = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    // Roll back the employee row so we don't leave an orphaned record with no login.
+    await supabase.from('employees').delete().eq('employee_id', employee_id)
+    throw new Error(result.error || 'Could not create staff login')
+  }
+
+  return emp
 }
 
 export async function setEmployeeActive(id, active) {
