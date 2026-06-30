@@ -40,7 +40,7 @@ export const SERVICE_CATEGORIES = [
 ]
 
 // Columns safe to surface to the UI — never includes `pin`.
-const EMP_COLS = 'employee_id, user_id, name, role, active'
+const EMP_COLS = 'employee_id, user_id, name, role, active, removed_at'
 
 const uid = () => 'id_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
 
@@ -325,7 +325,9 @@ export async function getAdminDashboard() {
   for (const s of weekShifts) {
     if (!empStats[s.employee_id]) {
       const emp = employees[s.employee_id]
-      if (!emp || emp.role === 'owner') continue
+      // Skip owner and removed staff from the leaderboard. Their historical
+      // shifts still count toward location/day totals above.
+      if (!emp || emp.role === 'owner' || emp.removed_at) continue
       empStats[s.employee_id] = { employee_id: s.employee_id, name: emp.name, hours: 0, services: 0 }
     }
     if (empStats[s.employee_id]) empStats[s.employee_id].hours += shiftPaidHours(s)
@@ -418,10 +420,76 @@ export async function editShiftHours(shiftId, actorId, newBreakMinutes, newClock
   return after
 }
 
-export async function getEmployees() {
-  const { data, error } = await supabase.from('employees').select(EMP_COLS).order('name', { ascending: true })
+// Active employees only by default. Pass { includeRemoved: true } to also return
+// anonymized/removed rows (for the Employees screen's "Show removed staff" list).
+export async function getEmployees({ includeRemoved = false } = {}) {
+  let q = supabase.from('employees').select(EMP_COLS)
+  if (!includeRemoved) q = q.is('removed_at', null)
+  const { data, error } = await q.order('name', { ascending: true })
   if (error) throw new Error(error.message)
   return data
+}
+
+// Removed (anonymized) employees with their removal date and the reason recorded
+// in the audit log at removal time. Read-only — for the owner's own reference.
+export async function getRemovedEmployees() {
+  const { data: emps, error } = await supabase
+    .from('employees')
+    .select('employee_id, name, removed_at')
+    .not('removed_at', 'is', null)
+    .order('removed_at', { ascending: false })
+  if (error) throw new Error(error.message)
+  if (!emps || emps.length === 0) return []
+  const ids = emps.map((e) => e.employee_id)
+  const { data: audits } = await supabase
+    .from('audit_log')
+    .select('entity_id, reason, before_json, at')
+    .eq('action', 'remove')
+    .in('entity_id', ids)
+    .order('id', { ascending: false })
+  // Keep the most recent remove entry per employee (list is newest-first).
+  const meta = {}
+  for (const a of audits || []) {
+    if (meta[a.entity_id]) continue
+    const before = typeof a.before_json === 'string' ? JSON.parse(a.before_json || '{}') : (a.before_json || {})
+    meta[a.entity_id] = { reason: a.reason || null, original_name: before.name || null }
+  }
+  return emps.map((e) => ({
+    ...e,
+    reason: meta[e.employee_id]?.reason || null,
+    original_name: meta[e.employee_id]?.original_name || null,
+  }))
+}
+
+// Fetch a single employee's PIN on-demand — used only to display the PIN that is
+// about to be retired in the remove-confirmation modal. Deliberately scoped: the
+// PIN is never included in list payloads (see EMP_COLS).
+export async function getEmployeePin(employeeId) {
+  const { data, error } = await supabase
+    .from('employees').select('pin').eq('employee_id', employeeId).single()
+  if (error) throw new Error(error.message)
+  return data?.pin || null
+}
+
+// Permanently remove (anonymize + revoke login) an employee via the Edge
+// Function. Irreversible: the auth user is deleted and the row is anonymized to
+// "Former employee", but the employee_id and all history are preserved.
+export async function removeEmployee(employeeId, reason) {
+  const { data: { session } } = await supabase.auth.getSession()
+  const res = await fetch(
+    `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/remove-staff-login`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session?.access_token}`,
+      },
+      body: JSON.stringify({ employeeId, reason }),
+    }
+  )
+  const result = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(result.error || 'Could not remove employee')
+  return result
 }
 
 export async function addEmployee({ name, role, pin }) {
@@ -524,6 +592,7 @@ export async function getReport({ from, to }) {
     for (const x of svcs) byCat[x.service_category_id] = (byCat[x.service_category_id] || 0) + x.count
     return {
       shift_id: s.shift_id,
+      employee_id: s.employee_id,
       employee: emp?.name || s.employee_id,
       location: loc?.name || s.location_id,
       date: s.clock_on_at.slice(0, 10),
@@ -536,10 +605,10 @@ export async function getReport({ from, to }) {
 
 export async function exportReportCsv({ from, to }) {
   const rows = await getReport({ from, to })
-  const lines = [['Employee', 'Date', 'Location', 'Paid Hours', ...SERVICE_CATEGORIES.map((c) => c.name), 'Total Services'].join(',')]
+  const lines = [['Employee', 'Employee ID', 'Date', 'Location', 'Paid Hours', ...SERVICE_CATEGORIES.map((c) => c.name), 'Total Services'].join(',')]
   for (const r of rows) {
     lines.push([
-      `"${r.employee}"`, r.date, `"${r.location}"`,
+      `"${r.employee}"`, r.employee_id, r.date, `"${r.location}"`,
       r.paid_hours.toFixed(2),
       ...SERVICE_CATEGORIES.map((c) => r.services_by_category[c.service_category_id] || 0),
       r.total_services,

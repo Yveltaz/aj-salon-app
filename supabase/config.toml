@@ -5,3 +5,7 @@ project_id = "hmdmkxqxwmvdjegtjxhp"
 # itself. Disable gateway JWT verification so the function controls every response.
 [functions.create-staff-login]
 verify_jwt = false
+
+# remove-staff-login does its own owner-role check and CORS preflight too.
+[functions.remove-staff-login]
+verify_jwt = false
