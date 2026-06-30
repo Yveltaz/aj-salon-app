@@ -16,7 +16,10 @@ h1{font-size:1.2rem;margin:0 0 8px}p{color:#6b6258;line-height:1.5}</style></hea
 }
 
 function redirectApp(origin: string, query: string): Response {
-  const base = origin || Deno.env.get('COMPANY_URL') || ''
+  // Always return to the canonical production app URL when configured, so a
+  // connection started from a dynamic Vercel preview deployment still lands on
+  // production. The signed origin is only a fallback if COMPANY_URL is unset.
+  const base = Deno.env.get('COMPANY_URL') || origin || ''
   const location = base ? `${base}/admin?${query}` : ''
   if (!location) return errorPage('The connection succeeded but the app URL is unknown.')
   return new Response(null, { status: 302, headers: { Location: location } })

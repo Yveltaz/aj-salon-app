@@ -20,11 +20,9 @@ const NAV = [
   { id: 'audit', label: 'Audit' },
 ]
 
-export default function AdminPortal({ employee, onLogout }) {
-  // Land on Reports when returning from the Xero OAuth redirect (?xero=...).
-  const [page, setPage] = useState(() =>
-    new URLSearchParams(window.location.search).get('xero') ? 'reports' : 'dashboard'
-  )
+export default function AdminPortal({ employee, onLogout, landOn }) {
+  // App decides where to land (e.g. 'reports' after the Xero OAuth redirect).
+  const [page, setPage] = useState(landOn || 'dashboard')
   const [pendingCount, setPendingCount] = useState(0)
   const [pendingLeave, setPendingLeave] = useState(0)
 

@@ -44,20 +44,10 @@ export default function Reports() {
     setHistory(hist)
   }
 
-  // Handle the OAuth redirect (?xero=connected | ?xero=error&message=...) once.
+  // Load connection status + history on mount. The Xero-redirect toast and URL
+  // cleanup are handled once in App.jsx (so they work on any landing path).
   useEffect(() => {
     refreshXero()
-    const params = new URLSearchParams(window.location.search)
-    const result = params.get('xero')
-    if (result === 'connected') {
-      toast(`Connected to ${params.get('org') || 'Xero'}.`)
-    } else if (result === 'error') {
-      toast(`Xero connection failed: ${params.get('message') || 'unknown error'}`)
-    }
-    if (result) {
-      // Clean the URL so a refresh doesn't re-trigger the toast.
-      window.history.replaceState({}, '', window.location.pathname)
-    }
   }, [])
 
   async function handleExport() {

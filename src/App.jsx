@@ -21,6 +21,16 @@ export default function App() {
   const [toastMsg, setToastMsg] = useState('')
   const toastTimer = useRef(null)
 
+  // Capture the Xero OAuth redirect params (?xero=connected&org=... or
+  // ?xero=error&message=...) once, on whatever path we land on (the callback
+  // sends us to /admin?..., but this also covers landing on the root path).
+  const [xeroRedirect] = useState(() => {
+    const p = new URLSearchParams(window.location.search)
+    const status = p.get('xero')
+    if (!status) return null
+    return { status, org: p.get('org') || '', message: p.get('message') || '' }
+  })
+
   const toast = (msg) => {
     setToastMsg(msg)
     clearTimeout(toastTimer.current)
@@ -34,6 +44,16 @@ export default function App() {
     }
   }, [employee])
 
+  // Show the Xero connection toast on load and strip the query params so a
+  // refresh doesn't replay it. Owners land on the Reports admin screen (below).
+  useEffect(() => {
+    if (!xeroRedirect) return
+    window.history.replaceState({}, '', window.location.pathname)
+    toast(xeroRedirect.status === 'connected'
+      ? `Connected to ${xeroRedirect.org || 'Xero'}.`
+      : `Xero connection failed: ${xeroRedirect.message || 'unknown error'}`)
+  }, [])
+
   if (!employee) return <div className="app"><Login onLogin={setEmployee} /><Toast msg={toastMsg} /></div>
 
   const logout = () => {
@@ -44,7 +64,12 @@ export default function App() {
     setTab('shift')
   }
 
-  if (employee.role === 'owner') return <AdminPortal employee={employee} onLogout={logout} />
+  if (employee.role === 'owner') return (
+    <>
+      <AdminPortal employee={employee} onLogout={logout} landOn={xeroRedirect ? 'reports' : undefined} />
+      <Toast msg={toastMsg} />
+    </>
+  )
 
   let body
   if (tab === 'shift') {
