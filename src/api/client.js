@@ -821,3 +821,63 @@ export async function rejectLeave(leaveId, actorId, reason) {
   await writeAudit({ actor_id: actorId, entity_type: 'leave', entity_id: leaveId, action: 'reject', before_json: before, after_json: after, reason })
   return mapLeave(after)
 }
+
+// --- Xero payroll sync ------------------------------------------------------
+//
+// All Xero secret-credential work happens in Edge Functions; the frontend only
+// ever sees connection status (via the tokenless xero_status view) and push
+// results. Tokens never reach the browser.
+
+// Call an Edge Function with the current admin's session token.
+async function invokeFunction(name, body) {
+  const { data: { session } } = await supabase.auth.getSession()
+  const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/${name}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session?.access_token}`,
+    },
+    body: JSON.stringify(body || {}),
+  })
+  const result = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(result.error || `${name} failed`)
+  return result
+}
+
+// { connected, tenantName, connectedAt } — reads the tokenless status view.
+export async function getXeroStatus() {
+  const { data, error } = await supabase
+    .from('xero_status').select('connected, tenant_name, connected_at').maybeSingle()
+  if (error) throw new Error(error.message)
+  if (!data || !data.connected) return { connected: false, tenantName: null, connectedAt: null }
+  return { connected: true, tenantName: data.tenant_name, connectedAt: data.connected_at }
+}
+
+// Returns the Xero authorization URL; the caller redirects the browser to it.
+export async function startXeroConnect() {
+  const { url } = await invokeFunction('xero-oauth-start', { origin: window.location.origin })
+  return url
+}
+
+// Pushes approved hours for the period as Xero draft timesheets.
+// Returns { pushed: [...names], skipped: [{name, reason}], status }.
+export async function pushToXero(payPeriodStart, payPeriodEnd) {
+  return invokeFunction('xero-push-timesheet', { payPeriodStart, payPeriodEnd })
+}
+
+// Past pushes, newest first.
+export async function getXeroPushHistory() {
+  const { data, error } = await supabase
+    .from('xero_push_log')
+    .select('push_id, pay_period_start, pay_period_end, pushed_at, employee_count, total_hours, status, error_message')
+    .order('pushed_at', { ascending: false })
+  if (error) throw new Error(error.message)
+  return data || []
+}
+
+// Clears the Xero connection (owner-only, enforced inside the SECURITY DEFINER
+// disconnect_xero() function so tokens are never exposed to the frontend).
+export async function disconnectXero() {
+  const { error } = await supabase.rpc('disconnect_xero')
+  if (error) throw new Error(error.message)
+}

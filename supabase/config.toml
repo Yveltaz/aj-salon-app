@@ -9,3 +9,14 @@ verify_jwt = false
 # remove-staff-login does its own owner-role check and CORS preflight too.
 [functions.remove-staff-login]
 verify_jwt = false
+
+# Xero functions: start/push do their own owner-role check; callback is hit by
+# Xero's redirect (no JWT) and is secured by the HMAC-signed `state` param.
+[functions.xero-oauth-start]
+verify_jwt = false
+
+[functions.xero-oauth-callback]
+verify_jwt = false
+
+[functions.xero-push-timesheet]
+verify_jwt = false

@@ -491,6 +491,16 @@ select.admin-input { cursor: pointer; }
 }
 .emp-removed-toggle:hover { color: var(--ink); }
 
+/* xero payroll sync */
+.xero-disconnect {
+  background: none; border: none; cursor: pointer;
+  color: var(--ink-soft); font-size: 0.8rem; margin-left: 12px; text-decoration: underline;
+}
+.xero-disconnect:hover { color: var(--warn); }
+.xero-result {
+  margin-top: 14px; padding: 12px 14px; border-radius: 10px; background: var(--ivory);
+}
+
 /* modals */
 .admin-modal-overlay {
   position: fixed; inset: 0; z-index: 50;

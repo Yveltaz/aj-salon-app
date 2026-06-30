@@ -21,7 +21,10 @@ const NAV = [
 ]
 
 export default function AdminPortal({ employee, onLogout }) {
-  const [page, setPage] = useState('dashboard')
+  // Land on Reports when returning from the Xero OAuth redirect (?xero=...).
+  const [page, setPage] = useState(() =>
+    new URLSearchParams(window.location.search).get('xero') ? 'reports' : 'dashboard'
+  )
   const [pendingCount, setPendingCount] = useState(0)
   const [pendingLeave, setPendingLeave] = useState(0)
 
